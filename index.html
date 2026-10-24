@@ -1,1 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connectome House: Fly Brain Sandbox</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #121214;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            gap: 20px;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        #left-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        #right-panel {
+            width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: #1a1a1e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #2d2d34;
+        }
+        canvas {
+            background: #1e1e24;
+            border-radius: 8px;
+            border: 1px solid #2d2d34;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        h2, h3 { margin: 0; color: #60a5fa; }
+        .hud {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            background: #1a1a1e;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .stat-box { border-left: 3px solid #3b82f6; padding-left: 8px; }
+        textarea {
+            width: 100%;
+            height: 250px;
+            background: #0f0f11;
+            color: #4ade80;
+            font-family: 'Courier New', Courier, monospace;
+            border: 1px solid #3f3f46;
+            border-radius: 6px;
+            padding: 10px;
+            box-sizing: border-box;
+            resize: none;
+            font-size: 13px;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        button:hover { background: #1d4ed8; }
+        .neuron-activity {
+            flex: 1;
+            overflow-y: auto;
+            background: #0f0f11;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            border: 1px solid #2d2d34;
+        }
+        .active-task { color: #f59e0b; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <!-- LEFT PANEL: The Environment & HUD -->
+    <div id="left-panel">
+        <div>
+            <h2>Connectome House v1.0</h2>
+            <p style="margin: 5px 0; font-size: 14px; color: #94a3b8;">
+                Simulating Google's MaleCNS Architecture. Program sensory neural inputs to trigger motor output paths.
+            </p>
+        </div>
+        
+        <canvas id="houseCanvas" width="700" height="500"></canvas>
+
+        <div class="hud">
+            <div class="stat-box"><strong>Fly Energy:</strong> <span id="ui-energy">100</span>%</div>
+            <div class="stat-box"><strong>Target Object:</strong> <span id="ui-target">None</span></div>
+            <div class="stat-box"><strong>Active Circuit:</strong> <span id="ui-circuit">Idle Network</span></div>
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL: Programmable Synaptic Interface -->
+    <div id="right-panel">
+        <h3>Task Programmer</h3>
+        <p style="margin: 0; font-size: 12px; color: #a1a1aa;">
+            Write rules to stimulate the fly's sensory pathways based on house conditions.
+        </p>
+        
+        <textarea id="code-editor">/* 
+  AVAILABLE SENSES (Inputs):
+  - distanceToWindow  - distanceToSugar
+  - flyEnergy         - currentRoom ("kitchen", "livingRoom")
+
+  AVAILABLE CIRCUITS (Outputs):
+  - triggerVisualHoming() -> Flies to closest window
+  - triggerOlfactoryForage() -> Tracks down sugar source
+  - triggerRestCycle() -> Parks body to recharge
+*/
+
+if (flyEnergy < 30) {
+    // Low energy activates resting behavior
+    triggerRestCycle();
+} else if (distanceToSugar < 250) {
+    // Smelling sucrose fires the Lobula Plate pathway
+    triggerOlfactoryForage();
+} else {
+    // Default phototaxis behavior
+    triggerVisualHoming();
+}</textarea>
+        
+        <button onclick="compileBrainRules()">Upload to Connectome</button>
+
+        <h3>Neural Spikes (Ventral Nerve Cord)</h3>
+        <div class="neuron-activity" id="neuron-log">
+            [System] Core 166k Connectome Engine Initialized...<br>
+            [VNC] Waiting for sensory payload stimulation...
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('houseCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Environmental Entities
+        const house = {
+            rooms: [
+                { name: "livingRoom", x: 0, y: 0, w: 380, h: 500, color: "#232329" },
+                { name: "kitchen", x: 380, y: 0, w: 320, h: 500, color: "#282523" }
+            ],
+            window: { x: 40, y: 10, w: 80, h: 10, label: "Window" },
+            sugar: { x: 550, y: 380, radius: 12, label: "Sugar Cube" }
+        };
+
+        // The Fly Object (Physical Embodiment)
+        const fly = {
+            x: 200,
+            y: 250,
+            vx: 0,
+            vy: 0,
+            speed: 2.5,
+            energy: 100,
+            targetMode: "Idle",
+            angle: 0
+        };
+
+        // Brain State Representation
+        let currentBrainScript = document.getElementById('code-editor').value;
+        let brainLogQueue = [];
+
+        function logNeuronSpike(msg) {
+            brainLogQueue.unshift(`[Neuron] ${msg}`);
+            if (brainLogQueue.length > 12) brainLogQueue.pop();
+            document.getElementById('neuron-log').innerHTML = brainLogQueue.join("<br>");
+        }
+
+        // Connectome Output Pathway Activations
+        function triggerVisualHoming() {
+            fly.targetMode = "Window";
+            seekTarget(house.window.x + 40, house.window.y + 15);
+            logNeuronSpike("Optic Lobe R1-R6 -> Motion Track DNg13 active.");
+        }
+
+        function triggerOlfactoryForage() {
+            fly.targetMode = "Sugar";
+            seekTarget(house.sugar.x, house.sugar.y);
+            logNeuronSpike("Antennal Lobe Glomerulus -> Alpha-lobe Mushroom Body firing.");
+        }
+
+        function triggerRestCycle() {
+            fly.targetMode = "Resting";
+            // Head to a quiet wall corner to sleep
+            seekTarget(50, 450);
+            logNeuronSpike("Central Complex Ring Neurons (ER3w) -> Suppressing locomotion.");
+        }
+
+        function seekTarget(tx, ty) {
+            const dx = tx - fly.x;
+            const dy = ty - fly.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > 5) {
+                fly.vx = (dx / dist) * fly.speed;
+                fly.vy = (dy / dist) * fly.speed;
+                fly.angle = Math.atan2(dy, dx);
+            } else {
+                fly.vx = 0;
+                fly.vy = 0;
+                if (fly.targetMode === "Sugar" && fly.energy < 100) {
+                    fly.energy = Math.min(100, fly.energy + 0.5);
+                    logNeuronSpike("Proboscis motor neurons firing -> Sucrose absorption active.");
+                }
+                if (fly.targetMode === "Resting") {
+                    fly.energy = Math.min(100, fly.energy + 0.2);
+                }
+            }
+        }
+
+        // Evaluates user code safely in a sandbox scope matching fly metrics
+        function processBrainInference() {
+            // Calculate distance inputs
+            const distanceToWindow = Math.sqrt(Math.pow((house.window.x + 40) - fly.x, 2) + Math.pow(house.window.y - fly.y, 2));
+            const distanceToSugar = Math.sqrt(Math.pow(house.sugar.x - fly.x, 2) + Math.pow(house.sugar.y - fly.y, 2));
+            const flyEnergy = fly.energy;
+            const currentRoom = fly.x < 380 ? "livingRoom" : "kitchen";
+
+            // Burn baseline metabolic energy during locomotion
+            if (fly.vx !== 0 || fly.vy !== 0) {
+                fly.energy = Math.max(0, fly.energy - 0.04);
+            }
+
+            try {
+                // Functional wrapper to evaluate user task routing rules
+                const brainCircuitEvaluator = new Function(
+                    'distanceToWindow', 'distanceToSugar', 'flyEnergy', 'currentRoom',
+                    'triggerVisualHoming', 'triggerOlfactoryForage', 'triggerRestCycle',
+                    currentBrainScript
+                );
+                
+                brainCircuitEvaluator(
+                    distanceToWindow, distanceToSugar, flyEnergy, currentRoom,
+                    triggerVisualHoming, triggerOlfactoryForage, triggerRestCycle
+                );
+            } catch (err) {
+                document.getElementById('neuron-log').innerHTML = `<span style="color: #ef4444;">[Brain Syntax Mutation]: ${err.message}</span>`;
+            }
+        }
+
+        function compileBrainRules() {
+            currentBrainScript = document.getElementById('code-editor').value;
+            logNeuronSpike("Rewiring Synaptic Weights... Upload complete.");
+        }
+
+        // Simulation Loop
+        function loop() {
+            // 1. Core Logic & AI Step
+            processBrainInference();
+
+            // Physics Update
+            fly.x += fly.vx;
+            fly.y += fly.vy;
+
+            // 2. Render Environment
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Rooms
+            house.rooms.forEach(room => {
+                ctx.fillStyle = room.color;
+                ctx.fillRect(room.x, room.y, room.w, room.h);
+                ctx.strokeStyle = "#3f3f46";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(room.x, room.y, room.w, room.h);
+                
+                // Label rooms
 
